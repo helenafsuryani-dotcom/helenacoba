@@ -1,0 +1,299 @@
+import re, datetime
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.formatting.rule import CellIsRule
+
+# --- Ganti dua path ini kalau file index.html atau hasilnya ada di folder lain ---
+HTML_FILE = 'index.html'
+OUT_FILE = 'Helena_Progress_Program.xlsx'
+
+html = open(HTML_FILE, encoding='utf-8').read()
+FOODS = eval(re.search(r'var DEF_FOODS=(\[.*?\n\]);', html, re.S).group(1))
+EXTRA = eval(re.search(r'var EXTRA=(\{.*?\});', html, re.S).group(1))
+
+F = 'Arial'
+base = Font(name=F, size=10)
+bold = Font(name=F, size=10, bold=True)
+title = Font(name=F, size=16, bold=True)
+sub = Font(name=F, size=10, italic=True, color='595959')
+blue = Font(name=F, size=10, color='0000FF')
+green = Font(name=F, size=10, color='008000')
+hdr_font = Font(name=F, size=10, bold=True, color='FFFFFF')
+hdr_fill = PatternFill('solid', fgColor='0E7C6B')
+in_fill = PatternFill('solid', fgColor='FFF2CC')
+sec_fill = PatternFill('solid', fgColor='EAF0ED')
+thin = Side(style='thin', color='D5E0DC')
+box = Border(left=thin, right=thin, top=thin, bottom=thin)
+wrap = Alignment(wrap_text=True, vertical='top')
+
+wb = Workbook()
+
+
+def header(ws, row, labels, col=1):
+    for i, l in enumerate(labels):
+        c = ws.cell(row=row, column=col + i, value=l)
+        c.font = hdr_font; c.fill = hdr_fill; c.border = box
+        c.alignment = Alignment(wrap_text=True, vertical='center')
+
+
+def put(ws, ref, val, font=base, fmt=None, fill=None, align=None):
+    c = ws[ref]; c.value = val; c.font = font
+    if fmt: c.number_format = fmt
+    if fill: c.fill = fill
+    if align: c.alignment = align
+    c.border = box
+    return c
+
+
+# ============================================================ Profil
+ws = wb.active; ws.title = 'Profil'
+ws['A1'] = "Helena's Progress Program"; ws['A1'].font = title
+ws['A2'] = 'Sel kuning dengan huruf biru adalah isian yang boleh kamu ubah. Semua sel lain terhitung otomatis.'; ws['A2'].font = sub
+ws['A4'] = 'Data kamu'
+for col in 'ABC':
+    ws[f'{col}4'].fill = sec_fill
+ws['A4'].font = bold
+
+inputs = [
+    (5, 'Jenis kelamin (P atau L)', 'P', None, 'Pilih P (perempuan) atau L (laki-laki).'),
+    (6, 'Umur (tahun)', 21, '0', 'Dari kamu.'),
+    (7, 'Tinggi (cm)', 175, '0.0', 'Dari kamu.'),
+    (8, 'Berat awal (kg)', 98, '0.0', 'Dari kamu.'),
+    (9, 'Berat sekarang (kg)', 95.3, '0.0', 'Per 8 November 2026, dari kamu. Perbarui tiap minggu.'),
+    (10, 'Tanggal timbang', datetime.date(2026, 11, 8), 'dd mmm yyyy', 'Dipakai untuk menghitung perkiraan tanggal sampai target.'),
+    (11, 'Target berat (kg)', 70, '0.0', 'Dari kamu.'),
+    (12, 'Faktor aktivitas', 1.2, '0.000', '1,2 sedikit gerak, 1,375 ringan, 1,55 sedang, 1,725 berat. Asumsi awal 1,2 karena aktivitasmu belum disebut.'),
+    (13, 'Defisit kalori (kkal/hari)', 500, '#,##0', 'Disarankan 300-750. Asumsi awal 500.'),
+    (14, 'Protein (g per kg berat)', 1.4, '0.0', 'Disarankan 1,2-1,6 saat diet. Asumsi awal 1,4.'),
+    (15, 'Lemak (% dari kalori)', 0.25, '0%', 'Disarankan 20-30%. Asumsi awal 25%.'),
+    (16, 'Batas gula (% dari kalori)', 0.10, '0%', 'Patokan WHO: gula tambahan di bawah 10% kalori.'),
+    (17, 'Batas natrium (mg per hari)', 2000, '#,##0', 'Patokan WHO: di bawah 2.000 mg (sekitar 5 g garam).'),
+]
+for r, lab, val, fmt, note in inputs:
+    put(ws, f'A{r}', lab)
+    put(ws, f'B{r}', val, blue, fmt, in_fill)
+    put(ws, f'C{r}', note, sub, align=wrap)
+
+ws['A19'] = 'Hasil hitungan'; ws['A19'].font = bold
+for col in 'ABC':
+    ws[f'{col}19'].fill = sec_fill
+
+# (key, label, formula dengan {key} sebagai rujukan sel hasil, format, catatan)
+RES = [
+    ('hm', 'Tinggi (m)', '=B7/100', '0.00', 'tinggi cm / 100'),
+    ('bmi0', 'BMI awal', '=B8/{hm}^2', '0.0', 'berat / tinggi (m) kuadrat'),
+    ('bmi', 'BMI sekarang', '=B9/{hm}^2', '0.0', 'berat / tinggi (m) kuadrat'),
+    ('who', 'Kategori BMI (WHO)', '=IF({bmi}<18.5,"Kurus",IF({bmi}<25,"Normal",IF({bmi}<30,"Berat badan berlebih","Obesitas")))', None, 'Batas WHO: 18,5 / 25 / 30'),
+    ('asia', 'Kategori BMI (Asia-Pasifik)', '=IF({bmi}<18.5,"Kurus",IF({bmi}<23,"Normal",IF({bmi}<25,"Berisiko berlebih",IF({bmi}<30,"Obesitas I","Obesitas II"))))', None, 'Batas Asia-Pasifik: 18,5 / 23 / 25 / 30'),
+    ('bmr', 'BMR (kkal/hari)', '=10*B9+6.25*B7-5*B6+IF(B5="L",5,-161)', '#,##0', 'Mifflin-St Jeor: 10xBB + 6,25xTB - 5xumur, lalu -161 (P) atau +5 (L)'),
+    ('tdee', 'TDEE (kkal/hari)', '={bmr}*B12', '#,##0', 'BMR x faktor aktivitas'),
+    ('kcal', 'Kalori makan per hari', '={tdee}-B13', '#,##0', 'TDEE - defisit'),
+    ('prot', 'Protein target (g)', '=B14*B9', '#,##0', 'g/kg x berat sekarang'),
+    ('protlo', 'Protein rentang bawah (g)', '=1.2*B9', '#,##0', '1,2 g/kg'),
+    ('prothi', 'Protein rentang atas (g)', '=1.6*B9', '#,##0', '1,6 g/kg'),
+    ('fat', 'Lemak (g)', '=B15*{kcal}/9', '#,##0', '% lemak x kalori / 9 kkal per g'),
+    ('carb', 'Karbo (g)', '=({kcal}-{prot}*4-{fat}*9)/4', '#,##0', 'Sisa kalori setelah protein dan lemak, / 4 kkal per g'),
+    ('filo', 'Serat minimal (g)', '=MAX(25,ROUNDUP(14*{kcal}/1000,0))', '0', '14 g per 1.000 kkal, minimal 25 g'),
+    ('fihi', 'Serat maksimal (g)', 35, '0', 'Batas atas yang nyaman bagi kebanyakan orang'),
+    ('sug', 'Gula maksimal (g)', '=B16*MAX(0,{kcal})/4', '#,##0', '% gula x kalori / 4 kkal per g. Dihitung dari gula total, jadi gula alami buah dan susu ikut terhitung'),
+    ('nam', 'Natrium maksimal (mg)', '=B17', '#,##0', 'Sama dengan batas natrium di atas'),
+    ('salt', 'Setara garam (g)', '={nam}/400', '0.0', '1 g garam mengandung 400 mg natrium'),
+    ('rate', 'Turun per minggu (kg)', '=B13*7/7700', '0.00', 'defisit x 7 / 7.700 kkal per kg lemak'),
+    ('lost', 'Sudah turun (kg)', '=B8-B9', '0.0', 'berat awal - sekarang'),
+    ('remain', 'Sisa menuju target (kg)', '=B9-B11', '0.0', 'sekarang - target'),
+    ('prog', 'Kemajuan', '=IF(B8>B11,(B8-B9)/(B8-B11),0)', '0%', 'sudah turun / total yang harus turun'),
+    ('weeks', 'Perkiraan waktu (minggu)', '=IF(AND({rate}>0,{remain}>0),{remain}/{rate},0)', '0', 'sisa kg / turun per minggu'),
+    ('eta', 'Perkiraan tanggal sampai target', '=IF({weeks}>0,B10+ROUND({weeks}*7,0),"-")', 'mmm yyyy', 'Perkiraan kasar, kenyataannya melambat'),
+    ('wlo', 'Berat sehat bawah (BMI 18,5)', '=18.5*{hm}^2', '0.0', 'BMI x tinggi (m) kuadrat'),
+    ('was', 'Berat sehat atas Asia-Pasifik (BMI 22,9)', '=22.9*{hm}^2', '0.0', 'BMI x tinggi (m) kuadrat'),
+    ('wwho', 'Berat sehat atas WHO (BMI 24,9)', '=24.9*{hm}^2', '0.0', 'BMI x tinggi (m) kuadrat'),
+    ('verdict', 'Penilaian target kalori', '=IF({kcal}<1200,"Terlalu rendah, kurangi defisit",IF({kcal}<1500,"Di bawah 1.500 kkal, sebaiknya dengan pengawasan dokter atau ahli gizi",IF({rate}/B9>0.01,"Terlalu cepat, lebih dari 1% berat badan per minggu","Aman")))', None, 'Batas: 1.200 kkal, 1.500 kkal, dan 1% berat badan per minggu'),
+]
+ROW = {}
+r = 20
+for key, *_ in RES:
+    ROW[key] = r; r += 1
+REF = {k: f'B{v}' for k, v in ROW.items()}
+
+
+def PR(key):
+    return f'Profil!B{ROW[key]}'
+
+
+for key, lab, f, fmt, note in RES:
+    rr = ROW[key]
+    put(ws, f'A{rr}', lab)
+    val = f.format(**REF) if isinstance(f, str) else f
+    is_input = key == 'fihi'
+    put(ws, f'B{rr}', val, blue if is_input else base, fmt, in_fill if is_input else None)
+    put(ws, f'C{rr}', note, sub, align=wrap)
+ws[f'A{ROW["kcal"]}'].font = bold; ws[f'B{ROW["kcal"]}'].font = bold
+ws.column_dimensions['A'].width = 40
+ws.column_dimensions['B'].width = 24
+ws.column_dimensions['C'].width = 80
+dv = DataValidation(type='list', formula1='"P,L"', allow_blank=False); ws.add_data_validation(dv); dv.add('B5')
+dv2 = DataValidation(type='list', formula1='"1.2,1.375,1.55,1.725"', allow_blank=False); ws.add_data_validation(dv2); dv2.add('B12')
+ws.freeze_panes = 'A4'
+last = max(ROW.values()) + 2
+ws[f'A{last}'] = 'Angka adalah perkiraan umum untuk orang dewasa sehat, bukan nasihat medis. Jika punya kondisi medis, konsultasikan dengan dokter atau ahli gizi.'
+ws[f'A{last}'].font = sub
+
+# ============================================================ Makanan
+wf = wb.create_sheet('Makanan')
+wf['A1'] = 'Daftar makanan'; wf['A1'].font = title
+wf['A2'] = 'Nilai per porsi yang tertulis di kolom Porsi, dan hanya perkiraan. Ubah sel kuning, atau isi baris kosong di bawah untuk menambah makanan (sampai baris 64).'; wf['A2'].font = sub
+wf['A3'] = 'Sumber: USDA FoodData Central dan Tabel Komposisi Pangan Indonesia, dibulatkan. Nilai bisa berbeda menurut merek dan cara masak. Gula adalah gula total.'; wf['A3'].font = sub
+header(wf, 4, ['Makanan', 'Porsi', 'Kkal', 'Protein (g)', 'Karbo (g)', 'Lemak (g)', 'Serat (g)', 'Gula (g)', 'Natrium (mg)', 'Kategori', 'Protein per 100 kkal', 'Serat per 100 kkal', 'Catatan'])
+wf.row_dimensions[4].height = 30
+FIRST, LAST = 5, 64
+for i in range(FIRST, LAST + 1):
+    idx = i - FIRST
+    row = FOODS[idx] if idx < len(FOODS) else None
+    if row:
+        g, na = EXTRA.get(row[0], [0, 0])
+        vals = [row[0], row[1], row[2], row[3], row[4], row[5], row[6], g, na, row[7], row[8]]
+    else:
+        vals = [None] * 11
+    cols = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13]   # kolom A-J dan M
+    for col, v in zip(cols, vals):
+        c = wf.cell(row=i, column=col, value=v)
+        c.font = blue; c.border = box; c.fill = in_fill
+        if col == 3: c.number_format = '#,##0'
+        if col in (4, 5, 6, 7, 8): c.number_format = '0.0'
+        if col == 9: c.number_format = '#,##0'
+        if col == 13: c.alignment = Alignment(wrap_text=True, vertical='top')
+    c = wf.cell(row=i, column=11, value=f'=IF(OR(C{i}="",C{i}=0),"",D{i}/C{i}*100)'); c.number_format = '0.0'; c.font = base; c.border = box
+    c = wf.cell(row=i, column=12, value=f'=IF(OR(C{i}="",C{i}=0),"",G{i}/C{i}*100)'); c.number_format = '0.0'; c.font = base; c.border = box
+for col, w in zip('ABCDEFGHIJKLM', [30, 26, 9, 12, 11, 11, 11, 10, 13, 15, 14, 14, 70]):
+    wf.column_dimensions[col].width = w
+wf.freeze_panes = 'B5'
+wf.auto_filter.ref = f'A4:M{LAST}'
+dv3 = DataValidation(type='list', formula1='"Protein,Karbo,Sayur & buah,Lemak sehat,Minuman,Lainnya"', allow_blank=True)
+wf.add_data_validation(dv3); dv3.add(f'J{FIRST}:J{LAST}')
+wf.conditional_formatting.add(f'K{FIRST}:K{LAST}', CellIsRule(operator='greaterThanOrEqual', formula=['10'], font=Font(name=F, bold=True, color='3B5BDB')))
+wf.conditional_formatting.add(f'L{FIRST}:L{LAST}', CellIsRule(operator='greaterThanOrEqual', formula=['3'], font=Font(name=F, bold=True, color='5C940D')))
+wf['A66'] = 'Protein per 100 kkal biru berarti 10 g atau lebih (padat protein). Serat per 100 kkal hijau berarti 3 g atau lebih (padat serat).'
+wf['A66'].font = sub
+
+# ============================================================ Catatan
+wc = wb.create_sheet('Catatan')
+wc['A1'] = 'Catatan makan hari ini'; wc['A1'].font = title
+wc['A2'] = 'Pilih makanan dari daftar (sel kuning kolom A) dan isi jumlah porsi. Baris contoh boleh diganti. Hapus isinya untuk mulai hari baru.'; wc['A2'].font = sub
+wc['A3'] = 'Selisih = target - total. Positif berarti masih ada sisa jatah, negatif berarti lewat. Untuk protein dan serat, target adalah batas minimal.'; wc['A3'].font = sub
+header(wc, 4, ['Zat', 'Total hari ini', 'Target', 'Selisih', 'Status'])
+LOG0, LOG1 = 14, 33
+rng = lambda col: f'{col}{LOG0}:{col}{LOG1}'
+summ = [
+    (5, 'Kalori (kkal)', 'C', 'kcal', 'max', '#,##0'),
+    (6, 'Protein (g)', 'D', 'prot', 'min', '#,##0'),
+    (7, 'Karbo (g)', 'E', 'carb', 'max', '#,##0'),
+    (8, 'Lemak (g)', 'F', 'fat', 'max', '#,##0'),
+    (9, 'Serat (g)', 'G', 'filo', 'min', '#,##0'),
+    (10, 'Gula total (g)', 'H', 'sug', 'max', '#,##0'),
+    (11, 'Natrium (mg)', 'I', 'nam', 'max', '#,##0'),
+]
+for r, lab, col, key, mode, fmt in summ:
+    put(wc, f'A{r}', lab, bold)
+    put(wc, f'B{r}', f'=SUM({rng(col)})', base, fmt)
+    put(wc, f'C{r}', f'={PR(key)}', green, fmt)
+    put(wc, f'D{r}', f'=C{r}-B{r}', base, '#,##0;-#,##0;0')
+    if mode == 'max':
+        put(wc, f'E{r}', f'=IF(B{r}>C{r},"Lewat target","Dalam target")')
+    else:
+        put(wc, f'E{r}', f'=IF(B{r}>=C{r},"Tercapai","Kurang")')
+header(wc, 13, ['Makanan', 'Porsi (jumlah)', 'Kkal', 'Protein (g)', 'Karbo (g)', 'Lemak (g)', 'Serat (g)', 'Gula (g)', 'Natrium (mg)'])
+sample = [('Oat', 1), ('Greek yogurt plain', 1), ('Biji chia', 1), ('Telur rebus', 2), ('Nasi merah', 1.5), ('Dada ayam tanpa kulit', 1.2),
+          ('Brokoli', 1.5), ('Bayam', 1), ('Apel', 1), ('Almond', 1), ('Ikan nila', 1.5), ('Ubi jalar', 1.5), ('Buncis', 1), ('Tempe', 0.5)]
+for i in range(LOG0, LOG1 + 1):
+    idx = i - LOG0
+    a = wc.cell(row=i, column=1, value=sample[idx][0] if idx < len(sample) else None)
+    b = wc.cell(row=i, column=2, value=sample[idx][1] if idx < len(sample) else None)
+    for c in (a, b):
+        c.font = blue; c.fill = in_fill; c.border = box
+    b.number_format = '0.0'
+    for col in 'CDEFGHI':
+        f = f'=IF(OR($A{i}="",$B{i}=""),"",IFERROR(INDEX(Makanan!${col}${FIRST}:${col}${LAST},MATCH($A{i},Makanan!$A${FIRST}:$A${LAST},0))*$B{i},"cek nama"))'
+        c = wc[f'{col}{i}']; c.value = f; c.font = base; c.border = box
+        c.number_format = '#,##0' if col in 'CI' else '0.0'
+dv4 = DataValidation(type='list', formula1=f'=Makanan!$A${FIRST}:$A${LAST}', allow_blank=True)
+wc.add_data_validation(dv4); dv4.add(f'A{LOG0}:A{LOG1}')
+wc.column_dimensions['A'].width = 32
+for col in 'BCDEFGHI':
+    wc.column_dimensions[col].width = 15
+wc[f'A{LOG1 + 2}'] = 'Baris contoh (14 baris pertama) adalah menu sehari sekitar 1.530 kkal, belum termasuk minyak masak. Ganti dengan makananmu hari ini.'
+wc[f'A{LOG1 + 2}'].font = sub
+wc.freeze_panes = 'A14'
+
+# ============================================================ Cara Hitung
+wh = wb.create_sheet('Cara Hitung')
+wh['A1'] = 'Cara menghitung'; wh['A1'].font = title
+wh['A2'] = 'Tabel di bawah memakai angka dari sheet Profil, jadi ikut berubah saat kamu mengubah data.'; wh['A2'].font = sub
+
+
+def sec(r, text):
+    wh[f'A{r}'] = text; wh[f'A{r}'].font = bold
+    for col in 'ABCDE':
+        wh[f'{col}{r}'].fill = sec_fill
+
+
+def para(r, text, h=None):
+    wh.merge_cells(f'A{r}:E{r}')
+    wh[f'A{r}'] = text; wh[f'A{r}'].font = base; wh[f'A{r}'].alignment = wrap
+    wh.row_dimensions[r].height = h or 15 * (1 + len(text) // 105)
+
+
+r = 4
+sec(r, '1. BMI (Indeks Massa Tubuh)'); r += 1
+para(r, 'BMI membandingkan berat dengan tinggi badan. Rumus: BMI = berat (kg) / tinggi (m) kuadrat. BMI hanya alat skrining. Ia tidak membedakan otot dan lemak dan tidak menunjukkan sebaran lemak. Untuk perempuan Asia, lingkar pinggang di atas 80 cm menandakan lemak perut berlebih.'); r += 1
+put(wh, f'A{r}', 'Contoh dengan angkamu'); put(wh, f'B{r}', f'=TEXT(Profil!B9,"0.0")&" / "&TEXT({PR("hm")}^2,"0.0000")&" = "&TEXT({PR("bmi")},"0.0")'); r += 2
+header(wh, r, ['BMI', 'WHO', 'Asia-Pasifik']); r += 1
+for lo, who, asia in [('di bawah 18,5', 'Kurus', 'Kurus'), ('18,5 - 22,9', 'Normal', 'Normal'), ('23 - 24,9', 'Normal', 'Berisiko berlebih'), ('25 - 29,9', 'Berat badan berlebih', 'Obesitas I'), ('30 atau lebih', 'Obesitas', 'Obesitas II')]:
+    put(wh, f'A{r}', lo); put(wh, f'B{r}', who); put(wh, f'C{r}', asia); r += 1
+r += 1
+sec(r, '2. BMR (kalori istirahat)'); r += 1
+para(r, 'Kalori yang dibakar tubuh hanya untuk bertahan hidup. Rumus Mifflin-St Jeor: 10 x BB (kg) + 6,25 x TB (cm) - 5 x umur, lalu dikurangi 161 untuk perempuan atau ditambah 5 untuk laki-laki.'); r += 1
+put(wh, f'A{r}', 'Contoh dengan angkamu'); put(wh, f'B{r}', f'=TEXT({PR("bmr")},"#,##0")&" kkal per hari"'); r += 2
+sec(r, '3. TDEE (kebutuhan kalori total)'); r += 1
+para(r, 'TDEE = BMR x faktor aktivitas. Makan sebanyak TDEE membuat berat badan tetap.'); r += 1
+header(wh, r, ['Aktivitas', 'Faktor', 'TDEE (kkal)']); r += 1
+for name, fac in [('Sedikit gerak', 1.2), ('Ringan (olahraga 1-3x/minggu)', 1.375), ('Sedang (olahraga 3-5x/minggu)', 1.55), ('Berat (olahraga 6-7x/minggu)', 1.725)]:
+    put(wh, f'A{r}', name); put(wh, f'B{r}', fac, blue, '0.000'); put(wh, f'C{r}', f'={PR("bmr")}*B{r}', base, '#,##0'); r += 1
+r += 1
+sec(r, '4. Defisit kalori'); r += 1
+para(r, 'Berat turun saat kamu makan lebih sedikit dari TDEE. Satu kilogram lemak tubuh setara sekitar 7.700 kkal. Kalori makan = TDEE - defisit. Turun per minggu (kg) = defisit x 7 / 7.700. Laju aman adalah 0,5-1% berat badan per minggu. Jangan makan di bawah 1.200 kkal, dan di bawah 1.500 kkal sebaiknya dengan pengawasan dokter atau ahli gizi. Hitung ulang setiap turun sekitar 5 kg karena kebutuhan kalorimu ikut mengecil.', 62); r += 1
+header(wh, r, ['Defisit per hari (kkal)', 'Kalori makan (kkal)', 'Turun per minggu (kg)', 'Sampai target (bulan)', 'Penilaian']); wh.row_dimensions[r].height = 30; r += 1
+for d in (300, 500, 750, 1000):
+    put(wh, f'A{r}', d, blue, '#,##0')
+    put(wh, f'B{r}', f'={PR("tdee")}-A{r}', base, '#,##0')
+    put(wh, f'C{r}', f'=A{r}*7/7700', base, '0.00')
+    put(wh, f'D{r}', f'=IF(AND(C{r}>0,{PR("remain")}>0),{PR("remain")}/C{r}/4.345,"-")', base, '0')
+    put(wh, f'E{r}', f'=IF(OR(B{r}<1500,C{r}/Profil!$B$9>0.01),"Terlalu agresif",IF(A{r}<=300,"Pelan dan nyaman","Seimbang"))')
+    r += 1
+r += 1
+sec(r, '5. Protein, lemak, karbo, serat, gula, natrium'); r += 1
+para(r, 'Protein 4 kkal per gram: 1,2-1,6 g per kg berat badan saat diet untuk menjaga otot. Lemak 9 kkal per gram: 20-30% dari kalori. Karbo 4 kkal per gram: sisa kalori setelah protein dan lemak. Serat: sekitar 14 g per 1.000 kkal dan minimal 25 g, kebutuhan perempuan dewasa sekitar 30 g per hari. Gula: patokan WHO untuk gula tambahan di bawah 10% kalori. Kolom gula di daftar adalah gula total, jadi gula alami buah dan susu ikut terhitung. Natrium: di bawah 2.000 mg per hari, setara sekitar 5 g garam (1 g garam = 400 mg natrium).', 92); r += 1
+put(wh, f'A{r}', 'Contoh dengan angkamu')
+put(wh, f'B{r}', f'="Protein "&TEXT({PR("prot")},"#,##0")&" g, lemak "&TEXT({PR("fat")},"#,##0")&" g, karbo "&TEXT({PR("carb")},"#,##0")&" g, serat "&{PR("filo")}&"-"&{PR("fihi")}&" g, gula maks "&TEXT({PR("sug")},"#,##0")&" g, natrium maks "&TEXT({PR("nam")},"#,##0")&" mg"'); r += 2
+sec(r, '6. Berat ideal'); r += 1
+para(r, 'Tidak ada satu angka pasti. Cara paling masuk akal adalah rentang berat dari BMI sehat (berat = BMI x tinggi kuadrat), lalu dibandingkan dengan rumus klasik.'); r += 1
+header(wh, r, ['Cara', 'Berat (kg)']); r += 1
+put(wh, f'A{r}', 'BMI 18,5-22,9 (Asia-Pasifik)'); put(wh, f'B{r}', f'=TEXT({PR("wlo")},"0.0")&" - "&TEXT({PR("was")},"0.0")'); r += 1
+put(wh, f'A{r}', 'BMI 18,5-24,9 (WHO)'); put(wh, f'B{r}', f'=TEXT({PR("wlo")},"0.0")&" - "&TEXT({PR("wwho")},"0.0")'); r += 1
+over = 'MAX(0,Profil!$B$7/2.54-60)'
+f0 = r
+put(wh, f'A{r}', 'Rumus Devine'); put(wh, f'B{r}', f'=IF(Profil!$B$5="L",50,45.5)+2.3*{over}', base, '0.0'); r += 1
+put(wh, f'A{r}', 'Rumus Robinson'); put(wh, f'B{r}', f'=IF(Profil!$B$5="L",52+1.9*{over},49+1.7*{over})', base, '0.0'); r += 1
+put(wh, f'A{r}', 'Rumus Miller'); put(wh, f'B{r}', f'=IF(Profil!$B$5="L",56.2+1.41*{over},53.1+1.36*{over})', base, '0.0'); r += 1
+put(wh, f'A{r}', 'Rumus Hamwi'); put(wh, f'B{r}', f'=IF(Profil!$B$5="L",48.1+2.72*{over},45.4+2.27*{over})', base, '0.0'); r += 1
+put(wh, f'A{r}', 'Rata-rata empat rumus klasik', bold); put(wh, f'B{r}', f'=AVERAGE(B{f0}:B{r-1})', bold, '0.0'); r += 1
+put(wh, f'A{r}', 'Target kamu'); put(wh, f'B{r}', f'=IF(AND(Profil!B11>={PR("wlo")},Profil!B11<={PR("was")}),"Ada di dalam rentang sehat",IF(Profil!B11>{PR("was")},"Sedikit di atas rentang normal Asia-Pasifik","Di bawah rentang sehat"))')
+wh.column_dimensions['A'].width = 36
+for col in 'BCDE':
+    wh.column_dimensions[col].width = 24
+wh.column_dimensions['B'].width = 46
+
+for s in wb.worksheets:
+    s.sheet_view.showGridLines = False
+wb.save(OUT_FILE)
+print('saved')
